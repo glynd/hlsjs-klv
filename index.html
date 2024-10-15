@@ -1,0 +1,237 @@
+<html>
+  <head>
+    <title>HLS JS - Basic demo with added KLV</title>
+  </head>
+
+  <body>
+    <script src="hls.js"></script> 
+
+    <center>
+      <h1>Hls.js demo - with added KLV display</h1>
+      
+      <div>
+        <span>KLV time: 
+          <span id="mytime"></span>
+        </span>
+      </div>
+      <br/>
+      <div>
+        <video height="600" id="video" controls></video>
+      </div>
+      <div id="fpsInfo"></div>
+      <div id="metadataInfo"></div>
+      <br/>
+      <div>Metadata samples:</div>
+      <div id="samples"></div>
+    </center>
+
+    <script>
+
+// Local store for current KLV playing data
+g_klv=[]
+
+
+// readBigInt64BE
+
+function readBigInt64BE(arr, offset) {
+  const view = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+
+  console.log(view)
+
+  return view.getBigUint64(offset)
+}
+
+
+function loadhex(s) {
+  var result = new Uint8Array(s.length/2);
+  for (var i = 0; i < s.length/2; i++) {
+    const bit = s.substr(i*2, 2)
+    console.log(bit)
+    result[i]=(parseInt(bit, 16));
+    console.log(bit +" = " + result[i].toString(16))
+  }
+  for (var i = 0; i < s.length/2; i++) {
+
+  }
+  return result;
+}
+
+// Hexdump Uint8Array
+function hexdump(buffer) { // buffer is a Uint8Array
+  return [...new Uint8Array(buffer)]
+      .map(x => x.toString(16).padStart(2, '0'))
+      .join('');
+}
+
+// Precision KLV time to ISO string
+function ptToString(tv) {
+  let msec = Number(tv/BigInt(1000));
+  let usec = String(tv).slice(-3);
+  let isoDate = new Date(msec).toISOString();
+  let isoDatePlus = isoDate.replace('Z', usec + 'Z');
+  return isoDatePlus
+}
+
+// Get BER encoded length, and number of bytes used for length
+// if high bit is set for first byte, lower bits indicate number of bytes of length that follows
+// BigEndian encoded....
+function getBERLength(arr, offset) {
+  const b1 = arr[offset]
+
+  if (!(b1 & 0x80)) {
+    return {val: b1, len: 1}
+  }
+
+  const lengthBytes = (b1 & 0x7F)
+  if (lengthBytes > 4) {
+    throw "Unexpected BER length !?!"
+  }
+
+  var val =0;
+  for(var i=0;i<lengthBytes;i++) {
+    val = val | (arr[offset+1+i]<< (lengthBytes-i-1)*8)
+  }
+  return {val: val, len: lengthBytes+1};
+}
+
+
+// HLSJS playback
+
+      var video = document.getElementById('video');
+      if (Hls.isSupported()) {
+        var hls = new Hls({
+          debug: true,
+          enableEmsgKLVMetadata: true
+        });
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, function(event,data) {
+            console.log("manifest loaded, found " + data.levels.length + " quality level");
+        })
+        hls.on(Hls.Events.MEDIA_ATTACHED, function () {
+ 
+          //FIXME
+          //hls.loadSource('https://XXXXXX.egress.XXXXX.mediapackagev2.eu-west-1.amazonaws.com/XXXXXXXXXXXXXXXXXXXXX')
+          alert('You need to set the HLS playback URL - look for FIXME in index.html')
+          
+          video.muted = true;
+          //video.config.debug = true;
+          video.play();
+        });
+
+      const misbLocalSetId = loadhex('060E2B34020B01010E01030101000000')
+
+      console.log("MISBLocalSet: " + hexdump(misbLocalSetId))
+
+       // Callback for Metadata from HLSJS: ID3 and KLV data
+       hls.on(Hls.Events.FRAG_PARSING_METADATA, (e, data) => {
+         console.log('Metadata')
+         console.log(typeof(data))
+
+         if (data) {
+           msg=''
+           // Iterate through the metadata objects, only processing KLV items
+           data.samples.forEach((sample) => {  
+              if (sample.type === Hls.MetadataSchema.misbklv)
+              {
+                pts = sample.pts
+                msg=msg+'pts:'+sample.pts.toFixed(2)
+
+                const klvdata = sample.data
+
+                //Validate the KLV data is "MISB" local data set
+                var match = true
+                for(var i=0;i<misbLocalSetId.length;i++) {
+                if (klvdata[i]!==misbLocalSetId[i]) {
+                    match = false
+                  }
+                }
+
+                if (!match) {
+                  console.log('This is not MISB KLV')
+                  return
+                }
+
+
+                var gotLength = getBERLength(klvdata, 16)
+                
+      
+                var offset=16+gotLength.len;
+                const dataLength = klvdata.length-offset
+                if (dataLength != gotLength.val) {
+                  console.log("Unexpected length mismatch dataLength="+dataLength.toString()+" vs klvLength="+gotLength.val.toString())
+                  console.log(hexdump(klvdata))
+                }
+                else {
+                  
+                  console.log(hexdump(klvdata))
+                  while(offset<gotLength.val) {
+                    const tag = klvdata[offset++]
+                    const berlen = getBERLength(klvdata, offset+1) 
+                    offset+=berlen.len
+                    
+                    switch(tag) {
+                      case 0x01: // Checksum
+                        break
+                      case 0x02: // Precision time
+                        const precisionTime = readBigInt64BE(klvdata, offset)
+                        g_klv.push({pts: pts, pt: precisionTime})
+                        msg =msg + " PT:"+ptToString(precisionTime)
+                        break
+                    }
+                    offset+=berlen.len
+                   
+                  }
+               }
+
+               msg=msg+'\n'
+             }
+           });
+           samples.innerText=msg
+         }
+       });
+      }
+
+
+// Callback from the video element to allow syncing of data to video
+if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
+  let paintCount = 0;
+  let startTime = 0.0;
+
+  const updateCanvas = (now, metadata) => {
+    if (startTime === 0.0) {
+      startTime = now;
+    }
+
+    const elapsed = (now - startTime) / 1000.0;
+    const fps = (++paintCount / elapsed).toFixed(3);
+    fpsInfo.innerText = `video fps: ${fps}`;
+    metadataInfo.innerText = JSON.stringify(metadata, null, 2);
+
+    // Get the mediaTime, then find the first KLV item stamped after the mediaTime
+    // Then use the item before that time as the item we display "on screen"
+    let mt    = metadata.mediaTime
+    let found = false
+    let i     = 0
+    for (i = 0; i < g_klv.length; i++) {
+      if (g_klv[i].pts>=mt) {
+         found=true
+         break;
+      }
+    }
+    if (found && i>0) {
+      mytime.innerText = ptToString(g_klv[i-1].pt)
+      g_klv = g_klv.slice(i-1)
+    }
+
+    // Re-register the callback to run on the next frame
+    video.requestVideoFrameCallback(updateCanvas);
+  };
+
+  // Initial registration of the callback to run on the first frame
+  video.requestVideoFrameCallback(updateCanvas);
+} else {
+  alert("Your browser does not support requestVideoFrameCallback().");
+}
+    </script>
+</html>
+
