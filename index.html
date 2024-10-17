@@ -120,6 +120,7 @@ function getBERLength(arr, offset) {
 
       const misbLocalSetId = loadhex('060E2B34020B01010E01030101000000')
 
+
       console.log("MISBLocalSet: " + hexdump(misbLocalSetId))
 
        // Callback for Metadata from HLSJS: ID3 and KLV data
@@ -166,7 +167,7 @@ function getBERLength(arr, offset) {
                   console.log(hexdump(klvdata))
                   while(offset<gotLength.val) {
                     const tag = klvdata[offset++]
-                    const berlen = getBERLength(klvdata, offset+1) 
+                    const berlen = getBERLength(klvdata, offset) 
                     offset+=berlen.len
                     
                     switch(tag) {
