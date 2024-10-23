@@ -36,8 +36,6 @@ g_klv=[]
 function readBigInt64BE(arr, offset) {
   const view = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
 
-  console.log(view)
-
   return view.getBigUint64(offset)
 }
 
@@ -126,7 +124,6 @@ function getBERLength(arr, offset) {
        // Callback for Metadata from HLSJS: ID3 and KLV data
        hls.on(Hls.Events.FRAG_PARSING_METADATA, (e, data) => {
          console.log('Metadata')
-         console.log(typeof(data))
 
          if (data) {
            msg=''
@@ -156,7 +153,8 @@ function getBERLength(arr, offset) {
                 var gotLength = getBERLength(klvdata, 16)
                 
       
-                var offset=16+gotLength.len;
+                var initialOffset=16+gotLength.len;
+                var offset=initialOffset;
                 const dataLength = klvdata.length-offset
                 if (dataLength != gotLength.val) {
                   console.log("Unexpected length mismatch dataLength="+dataLength.toString()+" vs klvLength="+gotLength.val.toString())
@@ -164,8 +162,8 @@ function getBERLength(arr, offset) {
                 }
                 else {
                   
-                  console.log(hexdump(klvdata))
-                  while(offset<gotLength.val) {
+                  //console.log(hexdump(klvdata))
+                  while((offset-initialOffset)<gotLength.val) {
                     const tag = klvdata[offset++]
                     const berlen = getBERLength(klvdata, offset) 
                     offset+=berlen.len
